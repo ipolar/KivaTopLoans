@@ -24,7 +24,7 @@ print "************************\n\n"
 
 # Scrape URL
 loans_url = "http://api.kivaws.org/v1/loans/"
-app_id = "?app_id=com.bluefroglondon"
+app_id = "?app_id=<YOUR_APP_ID_HERE>"
 
 # Proxy settings, leave proxy_url blank if you don't want to use it
 proxy_url = ""
