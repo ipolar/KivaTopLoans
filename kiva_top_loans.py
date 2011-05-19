@@ -30,7 +30,7 @@ app_id = "?app_id=<YOUR_APP_ID_HERE>"
 # Proxy settings, leave proxy_url blank if you don't want to use it
 proxy_url = ""
 
-# HTTP header settings.
+# HTTP User Agent header settings.
 user_agent_array = []
 user_agent_array.append('Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0)')
 user_agent_array.append('Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)')
@@ -56,8 +56,8 @@ user_agent_array.append('Mozilla/5.0 (Macintosh; U; PPC Mac OS X; en) AppleWebKi
 user_agent_array.append('Mozilla/4.0 (compatible; MSIE 5.15; Mac_PowerPC)')
 user_agent_array.append('Mozilla/5.0 (Macintosh; U; PPC Mac OS X Mach-O; en-US; rv:1.7a) Gecko/20050614 Firefox/0.9.0+')
 user_agent_array.append('Mozilla/5.0 (Macintosh; U; PPC Mac OS X; en-US) AppleWebKit/125.4 (KHTML, like Gecko, Safari) OmniWeb/v563.15')
-txdata = None
-txheaders = {
+data = None
+headers = {
 	'User-Agent': user_agent_array[random.randint(0, len(user_agent_array)-1)],
 	'Accept-Language': 'en-us',
 	'Accept-Encoding': 'gzip, deflate, compress;q=0.9',
@@ -74,7 +74,7 @@ db_name = 'python_kiva'
 #
 # Generate headers for a request
 #
-def genHeaders():
+def generate_headers():
 	new_header = {
 		'User-Agent': user_agent_array[random.randint(0, len(user_agent_array)-1)],
 		'Accept-Language': 'en-us',
@@ -86,9 +86,9 @@ def genHeaders():
 	return new_header
 
 #
-# Get the source code from the web page
+# Get the data from the API/Page
 #
-def fetchSourceProxy(url, proxy):
+def get_source(url, proxy):
 	if proxy != '':
 		print 'Using proxy: ', proxy
 		proxy = urllib2.ProxyHandler({'http': proxy})
@@ -97,14 +97,14 @@ def fetchSourceProxy(url, proxy):
 	else:
 		print 'No proxy in use...'
 	
-	# Build URL
+	# Build our scrape URL
 	url = '%s%s' % (url, app_id)
-	print 'Request URL is: ', url
+	print 'Scrape URL is: ', url
 	
-	# Generate a new, random header
-	txheaders = genHeaders()
-	req = urllib2.Request(url, txdata, txheaders)
-	response = urllib2.urlopen(req)
+	# Generate a random header...
+	headers = generate_headers()
+	request = urllib2.Request(url, data, headers)
+	response = urllib2.urlopen(request)
 	source = response.read()
 	return source
 
@@ -127,9 +127,9 @@ if __name__ == "__main__":
 	
 	print 'Current datetime:', str(mysql_timestamp_now)
 	
-	# Try and grab the URL source. If we get a standard 4xx, 5xx HTTP error or a URL error let us know.
+	# Try and grab the URL source/data. If we get a standard 4xx or 5xx HTTP error or a URL error let us know and dump into the DB...
 	try:
-		source = fetchSourceProxy(newest_loans_url, '')
+		source = get_source(newest_loans_url, '')
 	
 	except HTTPError, e:
 		print 'The server couldn\'t fulfill the request.'
@@ -147,7 +147,7 @@ if __name__ == "__main__":
 	
 	else:
 		# No errors returned, we should have some JSON!
-		# Woohoo, we have a successful request! Now update this systemkey row in the DB with a timestamp
+		# Woohoo, we have a successful request! Now update this log row in the DB with a timestamp...
 		# Get the current datetime timestamp
 		now = datetime.datetime.now()
 		mysql_timestamp_now = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -160,8 +160,6 @@ if __name__ == "__main__":
 		#	<funded_amount>75</funded_amount>
 		#	<basket_amount>0</basket_amount>
 		#	<posted_date>2011-04-05T08:40:01Z</posted_date>
-		
-		#print source
 		
 		pydata = simplejson.loads(source)
 		
