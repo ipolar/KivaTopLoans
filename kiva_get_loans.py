@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #
-# Grab the 20 newest loans from the Kiva API (in JSON format)
+# Qeries any Kiva loans in the DB and grabs their current loan stats via the Kiva API (in JSON format)
 #
 # Version:	0.2
 # Author:	Andy Lyon
@@ -18,13 +18,13 @@ import simplejson
 import iso8601
 
 print "\n**************************"
-print "* Kiva Latest 20 Loans   *"
+print "* Get Kiva Loans         *"
 print "* Author: Andy Lyon      *"
 print "* Version: 0.2           *"
-print "**************************\n\n"
+print "************************\n\n"
 
 # Scrape URL
-newest_loans_url = "http://api.kivaws.org/v1/loans/newest.json"
+loans_url = "http://api.kivaws.org/v1/loans/"
 app_id = "?app_id=com.bluefroglondon"
 
 # Proxy settings, leave proxy_url blank if you don't want to use it
@@ -88,7 +88,7 @@ def genHeaders():
 #
 # Get the source code from the web page
 #
-def fetchSourceProxy(url, proxy):
+def fetchSourceProxy(url, loans_id, proxy):
 	if proxy != '':
 		print 'Using proxy: ', proxy
 		proxy = urllib2.ProxyHandler({'http': proxy})
@@ -98,7 +98,7 @@ def fetchSourceProxy(url, proxy):
 		print 'No proxy in use...'
 	
 	# Build URL
-	url = '%s%s' % (url, app_id)
+	url = '%s%s%s%s' % (url, loans_id, '.json', app_id)
 	print 'Request URL is: ', url
 	
 	# Generate a new, random header
@@ -117,78 +117,76 @@ if __name__ == "__main__":
 	db = MySQLdb.connect(user=db_user, passwd=db_password, db=db_name)
 	db_cursor = db.cursor()
 	
-	# Get the current datetime
-	date_now = datetime.datetime.now()
-	mysql_timestamp_now = date_now.strftime("%Y-%m-%d %H:%M:%S")
+	# Grab the current loans stored in the DB we're looking at....
+	db_cursor.execute("""SELECT kiva_id FROM tbl_scraped_loans WHERE scraped_loans_funded = '0000-00-00 00:00:00' AND kiva_id != ''""")
 	
-	# At this point, create a new row in our MySQL DB, entering the current datetime
-	db_cursor.execute("""INSERT INTO tbl_log (http_request_datetime) VALUES (%s)""", (mysql_timestamp_now))
-	insert_id = db_cursor.lastrowid
+	# Loop through all the current loans from the DB...
+	my_data_set = db_cursor.fetchall()
 	
-	print 'Current datetime:', str(mysql_timestamp_now)
+	# Convert from long int and tuple into ints as a list
+	# http://stackoverflow.com/questions/2432402/python-lits-containg-tuples-and-long-int
+	my_data_set = [int(e[0]) for e in my_data_set]
 	
-	# Try and grab the URL source. If we get a standard 4xx, 5xx HTTP error or a URL error let us know.
-	try:
-		source = fetchSourceProxy(newest_loans_url, '')
-	
-	except HTTPError, e:
-		print 'The server couldn\'t fulfill the request.'
-		print 'Error code: ', e.code
+	for id in my_data_set:
 		
-		# We have an error, update this row in the DB with the error code
-		db_cursor.execute("""UPDATE tbl_log SET http_error_code = %s WHERE log_id = %s """, (e.code, insert_id))
-	
-	except URLError, e:
-		print 'We failed to reach a server.'
-		print 'Reason: ', e.reason
+		# Get the current datetime
+		date_now = datetime.datetime.now()
+		mysql_timestamp_now = date_now.strftime("%Y-%m-%d %H:%M:%S")
 		
-		# We have an error, update this row in the DB with the error code
-		db_cursor.execute("""UPDATE tbl_log SET url_error_reason = %s WHERE log_id = %s """, (e.reason, insert_id))
-	
-	else:
-		# No errors returned, we should have some JSON!
-		# Woohoo, we have a successful request! Now update this systemkey row in the DB with a timestamp
-		# Get the current datetime timestamp
-		now = datetime.datetime.now()
-		mysql_timestamp_now = now.strftime("%Y-%m-%d %H:%M:%S")
-		db_cursor.execute("""UPDATE tbl_log SET http_request_success_datetime = %s WHERE log_id = %s """, (mysql_timestamp_now, insert_id))
+		print 'Current datetime:', str(mysql_timestamp_now)
+		print 'Current ID:', str(id)
 		
-		#Parse, and store these intial values in the DB:
-		#	<id>287772</id>
-		#	<status>fundraising</status>
-		#	<loan_amount>900</loan_amount>
-		#	<funded_amount>75</funded_amount>
-		#	<basket_amount>0</basket_amount>
-		#	<posted_date>2011-04-05T08:40:01Z</posted_date>
+		# Insert a request row into the tbl_scraped_loans_items table...
+		db_cursor.execute("""INSERT INTO tbl_scraped_loans_items (http_request_datetime, kiva_id) VALUES (%s, %s)""", (mysql_timestamp_now, id))
+		loans_items_insert_id = db_cursor.lastrowid
 		
-		#print source
+		# Try and grab the URL source. If we get a standard 4xx, 5xx HTTP error or a URL error let us know.
+		try:
+			source = fetchSourceProxy(loans_url, id, '')
 		
-		pydata = simplejson.loads(source)
-		
-		for r in pydata['loans']:
+		except HTTPError, e:
+			print 'The server couldn\'t fulfill the request.'
+			print 'Error code: ', e.code
 			
-			# Now update this row with all the data from the JSON feed..
-			#	kiva_id
-			#	kiva_status
-			#	kiva_loan_amount
-			#	kiva_funded_amount
-			#	kiva_basket_amount
-			#	kiva_posted_date - e.g. <posted_date>2011-04-05T11:20:02Z</posted_date>
-			#	log_id
+			# We have an error, update this row in the DB with the error code
+			db_cursor.execute("""UPDATE tbl_scraped_loans_items SET http_error_code = %s WHERE scraped_loans_items_id = %s """, (e.code, loans_items_insert_id))
+		
+		except URLError, e:
+			print 'We failed to reach a server.'
+			print 'Reason: ', e.reason
 			
-			# Convert the ISO 8601 timestamp from Kiva & do the insert into the DB
-			kiva_posted_date = iso8601.parse_date(r['posted_date'])
-			kiva_posted_date = kiva_posted_date.strftime("%Y-%m-%d %H:%M:%S")
-			
+			# We have an error, update this row in the DB with the error code
+			db_cursor.execute("""UPDATE tbl_scraped_loans_items SET url_error_reason = %s WHERE scraped_loans_items_id = %s """, (e.reason, loans_items_insert_id))
+		
+		else:
+			# No errors returned, we should have some JSON!
+			# Woohoo, we have a successful request! Now update this systemkey row in the DB with a timestamp
 			# Get the current datetime timestamp
 			now = datetime.datetime.now()
 			mysql_timestamp_now = now.strftime("%Y-%m-%d %H:%M:%S")
+			db_cursor.execute("""UPDATE tbl_scraped_loans_items SET http_request_success_datetime = %s WHERE scraped_loans_items_id = %s """, (mysql_timestamp_now, loans_items_insert_id))
 			
-			# Now insert a new row..
-			try:
-				db_cursor.execute("""INSERT INTO tbl_scraped_loans (scraped_loans_date_scraped, kiva_id, kiva_loan_amount, kiva_status, kiva_funded_amount, kiva_basket_amount, kiva_posted_date, log_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""", (mysql_timestamp_now, r['id'], r['loan_amount'], r['status'], r['funded_amount'], r['basket_amount'], kiva_posted_date, insert_id))
+			#print source
 			
-			except MySQLdb.IntegrityError, message:
-				print "error!"
-		
-		print "done!"
+			pydata = simplejson.loads(source)
+			
+			for r in pydata['loans']:
+				
+				# Now update this row with all the data from the JSON feed for this specific loan
+				#	kiva_id
+				#	kiva_status
+				#	kiva_funded_amount
+				#	kiva_basket_amount
+				
+				# Get the current datetime timestamp
+				now = datetime.datetime.now()
+				mysql_timestamp_now = now.strftime("%Y-%m-%d %H:%M:%S")
+				
+				if (r['status'] == 'funded' or r['status'] == 'in_repayment' or r['status'] == 'paid' or r['status'] == 'defaulted' or r['status'] == 'refunded'):
+					# This loan is now funded! So set our funded timestamp...
+					db_cursor.execute("""UPDATE tbl_scraped_loans_items SET kiva_id = %s, kiva_status = %s, kiva_funded_amount = %s, kiva_basket_amount = %s WHERE scraped_loans_items_id = %s """, (r['id'], r['status'], r['funded_amount'], 0, loans_items_insert_id))
+					db_cursor.execute("""UPDATE tbl_scraped_loans SET scraped_loans_funded = %s, kiva_status = %s WHERE kiva_id = %s """, (mysql_timestamp_now, r['status'], r['id']))
+				else:
+					db_cursor.execute("""UPDATE tbl_scraped_loans_items SET kiva_id = %s, kiva_status = %s, kiva_funded_amount = %s, kiva_basket_amount = %s WHERE scraped_loans_items_id = %s """, (r['id'], r['status'], r['funded_amount'], r['basket_amount'], loans_items_insert_id))
+			
+			print "done!"
